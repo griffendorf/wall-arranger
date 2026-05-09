@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Wall Arranger</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{min-height:100%;width:100%}
+body{background:#F4EFE8}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect, useCallback } = React;
+
+import { useState, useRef, useEffect, useCallback } from "react";
+
+// Inject fonts
+if (typeof document !== "undefined") {
+  const s = document.createElement("style");
+  s.textContent = `@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..500&display=swap');`;
+  document.head.appendChild(s);
+}
+
+// ── Camera Modal ────────────────────────────────────────────────────────────
+function CameraModal({ onCapture, onClose }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [facingMode, setFacingMode] = useState("environment");
+  const [captured, setCaptured] = useState(null); // data URL preview
+  const [camError, setCamError] = useState(null);
+
+  const startCamera = useCallback(async (facing) => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    setCamError(null);
+    setReady(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => setReady(true);
+      }
+    } catch (e) {
+      setCamError("Camera access denied or unavailable. Please allow camera permissions and try again.");
+    }
+  }, []);
+
+  useEffect(() => {
+    startCamera(facingMode);
+    return () => {
+      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  const flipCamera = () => {
+    const next = facingMode === "environment" ? "user" : "environment";
+    setFacingMode(next);
+    setCaptured(null);
+    startCamera(next);
+  };
+
+  const capture = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    setCaptured(dataUrl);
+  };
+
+  const retake = () => setCaptured(null);
+
+  const confirm = () => {
+    if (!captured) return;
+    // Convert data URL to File
+    const byteString = atob(captured.split(",")[1]);
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+    const blob = new Blob([ab], { type: "image/jpeg" });
+    const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+    onCapture(file, captured);
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.85)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        style={{
+          background: "#1C1814", borderRadius: 20, overflow: "hidden",
+          width: "100%", maxWidth: 600,
+          boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+        }}
+      >
+        {/* Modal Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #2E2824" }}>
+          <span style={{ color: "#F4EFE8", fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 400 }}>
+            Take Photo
+          </span>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={flipCamera} title="Flip camera"
+              style={{ background: "#2E2824", border: "none", borderRadius: 8, padding: "6px 12px", color: "#C9B99A", cursor: "pointer", fontSize: 18 }}>
+              🔄
+            </button>
+            <button onClick={onClose}
+              style={{ background: "#2E2824", border: "none", borderRadius: 8, padding: "6px 12px", color: "#C9B99A", cursor: "pointer", fontSize: 18 }}>
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {/* Viewfinder */}
+        <div style={{ position: "relative", background: "#000", aspectRatio: "4/3", maxHeight: 420, overflow: "hidden" }}>
+          {camError ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, textAlign: "center", color: "#C9B99A", fontSize: 14, lineHeight: 1.6 }}>
+              <div>
+                <div style={{ fontSize: 32, marginBottom: 12 }}>📷</div>
+                {camError}
+              </div>
+            </div>
+          ) : (
+            <>
+              <video
+                ref={videoRef}
+                autoPlay playsInline muted
+                style={{
+                  width: "100%", height: "100%", objectFit: "cover",
+                  display: captured ? "none" : "block",
+                  transform: facingMode === "user" ? "scaleX(-1)" : "none",
+                }}
+              />
+              {captured && (
+                <img src={captured} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              )}
+              {!ready && !captured && !camError && (
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#C9B99A", fontSize: 13 }}>
+                  Starting camera…
+                </div>
+              )}
+              {/* Corner guides */}
+              {!captured && ready && (
+                <>
+                  {[["0%","0%","borderTop","borderLeft"],["0%","auto","borderTop","borderRight"],["auto","0%","borderBottom","borderLeft"],["auto","auto","borderBottom","borderRight"]].map(([t,r,b1,b2],i) => (
+                    <div key={i} style={{ position:"absolute", top: t === "auto" ? undefined : 16, bottom: t === "auto" ? 16 : undefined, left: r === "auto" ? undefined : 16, right: r === "auto" ? 16 : undefined, width:24, height:24, borderColor:"rgba(255,255,255,0.6)", borderStyle:"solid", borderWidth:0, [b1+"Width"]: 2, [b2+"Width"]: 2 }} />
+                  ))}
+                </>
+              )}
+            </>
+          )}
+        </div>
+        <canvas ref={canvasRef} style={{ display: "none" }} />
+
+        {/* Controls */}
+        <div style={{ padding: "20px 24px", display: "flex", gap: 12, justifyContent: "center", alignItems: "center" }}>
+          {!captured ? (
+            <button
+              onClick={capture}
+              disabled={!ready || !!camError}
+              style={{
+                width: 64, height: 64, borderRadius: "50%",
+                background: ready && !camError ? "#B5723A" : "#3E3430",
+                border: "3px solid #C9B99A",
+                cursor: ready && !camError ? "pointer" : "default",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 26, transition: "all 0.15s",
+                boxShadow: ready ? "0 0 0 6px rgba(181,114,58,0.25)" : "none",
+              }}
+            >
+              📷
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 12, width: "100%", justifyContent: "center" }}>
+              <button onClick={retake}
+                style={{ flex: 1, maxWidth: 160, padding: "12px", borderRadius: 10, background: "#2E2824", border: "1px solid #4E4440", color: "#C9B99A", cursor: "pointer", fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>
+                ↩ Retake
+              </button>
+              <button onClick={confirm}
+                style={{ flex: 1, maxWidth: 160, padding: "12px", borderRadius: 10, background: "#B5723A", border: "none", color: "white", cursor: "pointer", fontSize: 14, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>
+                Use Photo ✓
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const toBase64 = (file) =>
+  new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+
+const mime = (f) =>
+  ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(f.type)
+    ? f.type
+    : "image/jpeg";
+
+const COLORS = {
+  bg: "#F4EFE8",
+  card: "#FDFAF6",
+  border: "#E0D8CE",
+  accent: "#B5723A",
+  accentLight: "#F0E4D4",
+  text: "#26201C",
+  muted: "#8C7B6E",
+  white: "#FDFAF6",
+};
+
+const css = (obj) => obj;
+
+function CameraBtn({ onClick }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      title="Use camera"
+      style={{
+        display: "flex", alignItems: "center", gap: 5,
+        padding: "5px 12px",
+        borderRadius: 20,
+        border: `1px solid ${COLORS.border}`,
+        background: COLORS.card,
+        color: COLORS.accent,
+        fontSize: 12,
+        fontFamily: "'DM Sans', sans-serif",
+        fontWeight: 500,
+        cursor: "pointer",
+        transition: "all 0.15s",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = COLORS.accentLight; e.currentTarget.style.borderColor = COLORS.accent; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = COLORS.card; e.currentTarget.style.borderColor = COLORS.border; }}
+    >
+      📷 Camera
+    </button>
+  );
+}
+
+function WallArranger() {
+  const [roomFile, setRoomFile] = useState(null);
+  const [roomPreview, setRoomPreview] = useState(null);
+  const [itemFiles, setItemFiles] = useState([]);
+  const [itemPreviews, setItemPreviews] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [arrangements, setArrangements] = useState(null);
+  const [active, setActive] = useState(0);
+  const [error, setError] = useState(null);
+  const [dragRoom, setDragRoom] = useState(false);
+  const [dragItems, setDragItems] = useState(false);
+  const [cameraTarget, setCameraTarget] = useState(null); // "room" | "item"
+
+  const roomRef = useRef();
+  const itemsRef = useRef();
+
+  const handleCameraCapture = (file, previewUrl) => {
+    setCameraTarget(null);
+    if (cameraTarget === "room") {
+      setRoomFile(file);
+      setRoomPreview(previewUrl);
+      setArrangements(null);
+    } else if (cameraTarget === "item") {
+      setItemFiles((p) => [...p, file].slice(0, 8));
+      setItemPreviews((p) => [...p, previewUrl].slice(0, 8));
+      setArrangements(null);
+    }
+  };
+
+  const handleRoom = (files) => {
+    const f = Array.from(files).find((x) => x.type.startsWith("image/"));
+    if (!f) return;
+    setRoomFile(f);
+    setRoomPreview(URL.createObjectURL(f));
+    setArrangements(null);
+  };
+
+  const handleItems = (files) => {
+    const imgs = Array.from(files).filter((x) => x.type.startsWith("image/"));
+    setItemFiles((p) => [...p, ...imgs].slice(0, 8));
+    setItemPreviews((p) =>
+      [...p, ...imgs.map((f) => URL.createObjectURL(f))].slice(0, 8)
+    );
+    setArrangements(null);
+  };
+
+  const removeItem = (i) => {
+    setItemFiles((p) => p.filter((_, idx) => idx !== i));
+    setItemPreviews((p) => p.filter((_, idx) => idx !== i));
+  };
+
+  const generate = async () => {
+    if (!roomFile || itemFiles.length === 0) return;
+    setLoading(true);
+    setError(null);
+    setArrangements(null);
+
+    try {
+      const roomB64 = await toBase64(roomFile);
+      const itemsData = await Promise.all(
+        itemFiles.map(async (f) => ({ data: await toBase64(f), type: mime(f) }))
+      );
+
+      const content = [
+        {
+          type: "image",
+          source: { type: "base64", media_type: mime(roomFile), data: roomB64 },
+        },
+        {
+          type: "text",
+          text: `This is the ROOM photo. The user wants to hang ${itemFiles.length} item(s) shown below.`,
+        },
+        ...itemsData.flatMap((item, i) => [
+          {
+            type: "image",
+            source: { type: "base64", media_type: item.type, data: item.data },
+          },
+          { type: "text", text: `Item ${i + 1}` },
+        ]),
+        {
+          type: "text",
+          text: `Return ONLY raw valid JSON (no markdown, no backticks) with exactly 3 distinct wall arrangement suggestions.
+
+Schema:
+{
+  "arrangements": [
+    {
+      "id": 1,
+      "name": "Short Creative Name",
+      "style": "Style Label",
+      "description": "Two sentences about this arrangement and why it works in this room.",
+      "placements": [
+        {
+          "itemIndex": 0,
+          "xPercent": 30,
+          "yPercent": 18,
+          "widthPercent": 20,
+          "heightPercent": 26,
+          "note": "One-line placement tip"
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- xPercent/yPercent = top-left corner as % of the room image (0–100)
+- widthPercent/heightPercent = item size as % of room image dimensions
+- Place ALL ${itemFiles.length} item(s) in each arrangement on actual visible wall space
+- Items must NOT overlap; keep them on walls (above furniture, empty wall areas)
+- All 3 arrangements should feel genuinely different in concept
+- Keep items realistically sized relative to the room
+- xPercent + widthPercent < 95 and yPercent + heightPercent < 90`,
+        },
+      ];
+
+      const res = await fetch("https://locale-irc-shepherd-patients.trycloudflare.com/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: [{ role: "user", content }],
+        }),
+      });
+
+      const data = await res.json();
+      const raw = (data.content || []).map((b) => b.text || "").join("");
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      setArrangements(parsed.arrangements);
+      setActive(0);
+    } catch (e) {
+      setError("Couldn't generate arrangements. Please try again.");
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const canGen = roomFile && itemFiles.length > 0 && !loading;
+
+  return (
+    <div
+      style={{
+        fontFamily: "'DM Sans', sans-serif",
+        background: COLORS.bg,
+        minHeight: "100vh",
+        color: COLORS.text,
+        padding: "0 0 80px",
+      }}
+    >
+      {cameraTarget && (
+        <CameraModal
+          onCapture={handleCameraCapture}
+          onClose={() => setCameraTarget(null)}
+        />
+      )}
+      {/* Header */}
+      <div
+        style={{
+          borderBottom: `1px solid ${COLORS.border}`,
+          padding: "28px 40px 24px",
+          background: COLORS.card,
+          display: "flex",
+          alignItems: "baseline",
+          gap: 16,
+        }}
+      >
+        <span style={{ fontSize: 22 }}>🖼</span>
+        <div>
+          <h1
+            style={{
+              fontFamily: "'Cormorant Garamond', serif",
+              fontSize: "2rem",
+              fontWeight: 400,
+              letterSpacing: "-0.01em",
+              color: COLORS.text,
+              lineHeight: 1,
+            }}
+          >
+            Wall Arranger
+          </h1>
+          <p
+            style={{
+              fontSize: 13,
+              color: COLORS.muted,
+              marginTop: 4,
+              fontWeight: 300,
+            }}
+          >
+            Upload a room photo + items to hang. AI generates three distinct arrangements.
+          </p>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "36px 24px 0" }}>
+        {/* Upload Row */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          {/* Room Upload */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <label
+                style={{
+                  fontSize: 11,
+                  fontWeight: 500,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: COLORS.muted,
+                }}
+              >
+                Your Room
+              </label>
+              <CameraBtn onClick={() => setCameraTarget("room")} />
+            </div>
+            <div
+              onClick={() => roomRef.current.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragRoom(true); }}
+              onDragLeave={() => setDragRoom(false)}
+              onDrop={(e) => { e.preventDefault(); setDragRoom(false); handleRoom(e.dataTransfer.files); }}
+              style={{
+                border: `2px dashed ${dragRoom ? COLORS.accent : COLORS.border}`,
+                borderRadius: 12,
+                background: dragRoom ? COLORS.accentLight : COLORS.card,
+                cursor: "pointer",
+                overflow: "hidden",
+                transition: "all 0.2s",
+                minHeight: 220,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {roomPreview ? (
+                <img
+                  src={roomPreview}
+                  style={{ width: "100%", height: 220, objectFit: "cover", display: "block" }}
+                />
+              ) : (
+                <div style={{ textAlign: "center", padding: 32, color: COLORS.muted }}>
+                  <div style={{ fontSize: 36, marginBottom: 10 }}>🏠</div>
+                  <div style={{ fontSize: 14, fontWeight: 400 }}>Click or drop room photo</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>or use the 📷 button above</div>
+                </div>
+              )}
+            </div>
+            <input
+              ref={roomRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => handleRoom(e.target.files)}
+            />
+            {roomPreview && (
+              <button
+                onClick={() => { setRoomFile(null); setRoomPreview(null); setArrangements(null); }}
+                style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: COLORS.muted,
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 0,
+                  textDecoration: "underline",
+                }}
+              >
+                Remove photo
+              </button>
+            )}
+          </div>
+
+          {/* Items Upload */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <label
+                style={{
+                  fontSize: 11,
+                  fontWeight: 500,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: COLORS.muted,
+                }}
+              >
+                Items to Hang{" "}
+                <span style={{ fontWeight: 300, textTransform: "none", letterSpacing: 0 }}>
+                  (up to 8)
+                </span>
+              </label>
+              <CameraBtn onClick={() => setCameraTarget("item")} />
+            </div>
+            <div
+              onClick={() => itemsRef.current.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragItems(true); }}
+              onDragLeave={() => setDragItems(false)}
+              onDrop={(e) => { e.preventDefault(); setDragItems(false); handleItems(e.dataTransfer.files); }}
+              style={{
+                border: `2px dashed ${dragItems ? COLORS.accent : COLORS.border}`,
+                borderRadius: 12,
+                background: dragItems ? COLORS.accentLight : COLORS.card,
+                cursor: "pointer",
+                minHeight: itemPreviews.length > 0 ? "auto" : 220,
+                transition: "all 0.2s",
+                padding: itemPreviews.length > 0 ? 12 : 0,
+                display: "flex",
+                alignItems: itemPreviews.length > 0 ? "flex-start" : "center",
+                justifyContent: "center",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              {itemPreviews.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 32, color: COLORS.muted }}>
+                  <div style={{ fontSize: 36, marginBottom: 10 }}>🖼️</div>
+                  <div style={{ fontSize: 14 }}>Click or drop artwork / photos</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>Multiple files supported</div>
+                </div>
+              ) : (
+                <>
+                  {itemPreviews.map((src, i) => (
+                    <div
+                      key={i}
+                      style={{ position: "relative", width: 80, height: 80, flexShrink: 0 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <img
+                        src={src}
+                        style={{
+                          width: 80,
+                          height: 80,
+                          objectFit: "cover",
+                          borderRadius: 8,
+                          border: `1px solid ${COLORS.border}`,
+                        }}
+                      />
+                      <button
+                        onClick={() => removeItem(i)}
+                        style={{
+                          position: "absolute",
+                          top: -6,
+                          right: -6,
+                          width: 20,
+                          height: 20,
+                          borderRadius: "50%",
+                          background: COLORS.text,
+                          color: "white",
+                          border: "none",
+                          fontSize: 11,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          lineHeight: 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                      <div
+                        style={{
+                          position: "absolute",
+                          bottom: 2,
+                          left: 2,
+                          background: "rgba(0,0,0,0.55)",
+                          color: "white",
+                          fontSize: 9,
+                          padding: "1px 4px",
+                          borderRadius: 3,
+                        }}
+                      >
+                        {i + 1}
+                      </div>
+                    </div>
+                  ))}
+                  {itemPreviews.length < 8 && (
+                    <div
+                      style={{
+                        width: 80,
+                        height: 80,
+                        borderRadius: 8,
+                        border: `1.5px dashed ${COLORS.border}`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: COLORS.muted,
+                        fontSize: 22,
+                        cursor: "pointer",
+                      }}
+                    >
+                      +
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <input
+              ref={itemsRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => handleItems(e.target.files)}
+            />
+          </div>
+        </div>
+
+        {/* Generate Button */}
+        <div style={{ marginTop: 28, display: "flex", justifyContent: "center" }}>
+          <button
+            onClick={generate}
+            disabled={!canGen}
+            style={{
+              background: canGen ? COLORS.accent : COLORS.border,
+              color: canGen ? "white" : COLORS.muted,
+              border: "none",
+              borderRadius: 10,
+              padding: "14px 44px",
+              fontSize: 15,
+              fontFamily: "'DM Sans', sans-serif",
+              fontWeight: 500,
+              cursor: canGen ? "pointer" : "default",
+              transition: "all 0.2s",
+              letterSpacing: "0.01em",
+            }}
+          >
+            {loading ? "Generating arrangements…" : "Generate Arrangements →"}
+          </button>
+        </div>
+
+        {/* Loading Dots */}
+        {loading && (
+          <div style={{ textAlign: "center", marginTop: 20, color: COLORS.muted, fontSize: 13 }}>
+            <span>Analysing your room and items</span>
+            <LoadingDots />
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div
+            style={{
+              marginTop: 20,
+              padding: "14px 20px",
+              background: "#FEF2F2",
+              border: "1px solid #FECACA",
+              borderRadius: 10,
+              fontSize: 14,
+              color: "#B91C1C",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {/* Results */}
+        {arrangements && arrangements.length > 0 && (
+          <div style={{ marginTop: 40 }}>
+            <h2
+              style={{
+                fontFamily: "'Cormorant Garamond', serif",
+                fontSize: "1.6rem",
+                fontWeight: 400,
+                color: COLORS.text,
+                marginBottom: 20,
+              }}
+            >
+              Three Arrangements
+            </h2>
+
+            {/* Tab Pills */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
+              {arrangements.map((arr, i) => (
+                <button
+                  key={i}
+                  onClick={() => setActive(i)}
+                  style={{
+                    padding: "9px 22px",
+                    borderRadius: 100,
+                    border: `1.5px solid ${active === i ? COLORS.accent : COLORS.border}`,
+                    background: active === i ? COLORS.accent : COLORS.card,
+                    color: active === i ? "white" : COLORS.text,
+                    fontSize: 13,
+                    fontFamily: "'DM Sans', sans-serif",
+                    cursor: "pointer",
+                    transition: "all 0.18s",
+                    fontWeight: active === i ? 500 : 400,
+                  }}
+                >
+                  {i + 1}. {arr.name}
+                </button>
+              ))}
+            </div>
+
+            {/* Active Arrangement */}
+            {arrangements[active] && (
+              <ArrangementCard
+                arrangement={arrangements[active]}
+                roomSrc={roomPreview}
+                itemPreviews={itemPreviews}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ArrangementCard({ arrangement, roomSrc, itemPreviews }) {
+  return (
+    <div
+      style={{
+        background: COLORS.card,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 16,
+        overflow: "hidden",
+      }}
+    >
+      {/* Room with Overlays */}
+      <div style={{ position: "relative", width: "100%" }}>
+        <img
+          src={roomSrc}
+          alt="Room"
+          style={{ width: "100%", display: "block", maxHeight: 500, objectFit: "contain", background: "#1a1210" }}
+        />
+        {arrangement.placements.map((p, i) => {
+          const src = itemPreviews[p.itemIndex];
+          if (!src) return null;
+          return (
+            <div
+              key={i}
+              title={p.note || ""}
+              style={{
+                position: "absolute",
+                left: `${p.xPercent}%`,
+                top: `${p.yPercent}%`,
+                width: `${p.widthPercent}%`,
+                zIndex: 10,
+              }}
+            >
+              <img
+                src={src}
+                style={{
+                  width: "100%",
+                  display: "block",
+                  boxShadow: "0 6px 24px rgba(0,0,0,0.5), 0 0 0 3px rgba(255,255,255,0.9)",
+                  borderRadius: 2,
+                  opacity: 0.88,
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: -9,
+                  left: -9,
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  background: COLORS.accent,
+                  color: "white",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+                }}
+              >
+                {p.itemIndex + 1}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Info Panel */}
+      <div style={{ padding: "24px 28px" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 10 }}>
+          <h3
+            style={{
+              fontFamily: "'Cormorant Garamond', serif",
+              fontSize: "1.4rem",
+              fontWeight: 600,
+              color: COLORS.text,
+            }}
+          >
+            {arrangement.name}
+          </h3>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: COLORS.accent,
+              background: COLORS.accentLight,
+              padding: "3px 10px",
+              borderRadius: 100,
+            }}
+          >
+            {arrangement.style}
+          </span>
+        </div>
+        <p style={{ fontSize: 14, color: COLORS.muted, lineHeight: 1.7, marginBottom: 18 }}>
+          {arrangement.description}
+        </p>
+
+        {/* Placement Notes */}
+        <div
+          style={{
+            borderTop: `1px solid ${COLORS.border}`,
+            paddingTop: 16,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: COLORS.muted,
+              marginBottom: 4,
+            }}
+          >
+            Placement Notes
+          </div>
+          {arrangement.placements.map((p, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <span
+                style={{
+                  width: 20,
+                  height: 20,
+                  minWidth: 20,
+                  borderRadius: "50%",
+                  background: COLORS.accent,
+                  color: "white",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginTop: 1,
+                }}
+              >
+                {p.itemIndex + 1}
+              </span>
+              <span style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.5 }}>
+                <strong style={{ color: COLORS.text, fontWeight: 500 }}>Item {p.itemIndex + 1}:</strong>{" "}
+                {p.note || "Position as shown"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoadingDots() {
+  const [dots, setDots] = useState(".");
+  useEffect(() => {
+    const t = setInterval(() => setDots((d) => (d.length >= 3 ? "." : d + ".")), 500);
+    return () => clearInterval(t);
+  }, []);
+  return <span style={{ display: "inline-block", width: 20 }}>{dots}</span>;
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(WallArranger));
+</script>
+</body>
+</html>
